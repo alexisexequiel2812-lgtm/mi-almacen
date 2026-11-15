@@ -543,7 +543,9 @@ var BarcodeGen = (function() {
 (function(){
 "use strict";
 
-var KEY = "miAlmacen.v1", KEYU = "miAlmacen.usuario";
+var KEY = "miAlmacen.v1", KEYU = "miAlmacen.usuario", KEYB = "miAlmacen.ultimaCopia";
+var DIAS_AVISO = 7;
+function ultimaCopia(){ try{ var t = +localStorage.getItem(KEYB); return t > 0 ? t : 0; }catch(e){ return 0; } }
 /* DATOS LIMPIOS: Sin productos precargados ni permisos/usuarios externos */
 var S = {
   productos: [],
@@ -657,6 +659,11 @@ function renderBanners(){
   var h = "";
   if(!S.productos.length && !S.ventas.length) h += '<div class="banner">Tu almacén está vacío. Cargá tus productos en la pestaña <b>Productos</b> para empezar a vender.</div>';
   if(!canStore) h += '<div class="banner">Atención: El almacenamiento local está deshabilitado en este navegador.</div>';
+  if(S.productos.length || S.ventas.length){
+    var uc = ultimaCopia(), dias = uc ? Math.floor((Date.now() - uc) / 86400000) : null;
+    if(dias === null) h += '<div class="banner">Todavía no descargaste ninguna copia de seguridad. <button class="btn" id="bkNow" style="margin-left:6px">Descargar copia ahora</button></div>';
+    else if(dias >= DIAS_AVISO) h += '<div class="banner">Hace ' + dias + ' días que no hacés una copia de seguridad. <button class="btn" id="bkNow" style="margin-left:6px">Descargar copia ahora</button></div>';
+  }
   $("#vBanner").innerHTML = h;
 }
 
@@ -1177,7 +1184,9 @@ function renderMas(){
 
   // Respaldo Info
   var totalItems = S.productos.length + S.ventas.length + S.fiados.length;
-  $("#bkInfo").textContent = "Registros actuales: " + totalItems + " elementos guardados.";
+  var ucInfo = ultimaCopia();
+  $("#bkInfo").textContent = "Registros actuales: " + totalItems + " elementos guardados. " +
+    (ucInfo ? "Última copia descargada: " + new Date(ucInfo).toLocaleDateString("es-AR") + "." : "Todavía no descargaste ninguna copia.");
 }
 
 /* ---------- Event Listeners & Init ---------- */
@@ -1402,8 +1411,12 @@ document.addEventListener("DOMContentLoaded", function(){
     document.body.appendChild(dlAnchor);
     dlAnchor.click();
     dlAnchor.remove();
+    try{ localStorage.setItem(KEYB, String(Date.now())); }catch(e){}
+    renderBanners();
+    renderAll();
     toast("Respaldo descargado con éxito");
   };
+  $("#vBanner").onclick = function(e){ if(e.target.id === "bkNow") $("#bkSave").click(); };
 
   $("#bkFile").onchange = function(e){
     var file = e.target.files[0];
