@@ -163,6 +163,7 @@
       <button data-t="fiado">Fiado</button>
       <button data-t="codigos">Códigos</button>
       <button data-t="carteles">Carteles 🏷️</button>
+      <button data-t="gestion">Gestión</button>
       <button data-t="mas">Más</button>
     </nav>
   </header>
@@ -392,6 +393,18 @@
       </div>
     </section>
 
+    <!-- GESTIÓN -->
+    <section id="v-gestion" hidden>
+      <h2>Gestión</h2>
+      <div class="stack">
+        <div class="card stack" id="gCostos"></div>
+        <div class="card stack" id="gPrecios"></div>
+        <div class="card stack" id="gCompras"></div>
+        <div class="card stack" id="gPlanillas"></div>
+        <div class="card stack" id="gTicket"></div>
+      </div>
+    </section>
+
     <!-- MÁS (AJUSTES / RESPALDO) -->
     <section id="v-mas" hidden>
       <div class="stack">
@@ -592,12 +605,50 @@ function load(){
     else { save(); }
   } catch(e){ canStore = false; }
 }
+/* Convierte respaldos del formato anterior (items con "cantidad"/"productoId" y fiado como libro de
+   movimientos "deuda"/"pago") al formato que usa esta versión. Es seguro repetirlo: lo ya convertido no cambia. */
+function migrarFormato(d){
+  d.ventas.forEach(function(v){
+    var items = Array.isArray(v.items) ? v.items : [];
+    if(!items.length && v.productoId){
+      var c0 = +v.cantidad || 1;
+      items = [{ productoId: v.productoId, nombre: v.productoNombre || v.concepto || "Producto", cantidad: c0, precio: (+v.monto||0) / c0 }];
+    }
+    if(!items.length) items = [{ nombre: v.concepto || "Venta", cantidad: 1, precio: +v.monto || 0 }];
+    v.items = items.map(function(it){
+      var n = Object.assign({}, it);
+      if(n.id == null && n.productoId != null) n.id = n.productoId;
+      if(n.cant == null) n.cant = (n.cantidad != null ? (+n.cantidad || 0) : 1);
+      n.precio = +n.precio || 0;
+      return n;
+    });
+    if(!v.usuario) v.usuario = "";
+    v.monto = +v.monto || 0;
+  });
+  var cuentas = [], libro = [];
+  d.fiados.forEach(function(f){ (f.tipo === "deuda" || f.tipo === "pago") ? libro.push(f) : cuentas.push(f); });
+  cuentas.forEach(function(c){ if(!Array.isArray(c.movimientos)) c.movimientos = []; });
+  if(libro.length){
+    libro.sort(function(a,b){ return (a.ts||0) - (b.ts||0); });
+    libro.forEach(function(r){
+      var nombre = r.cliente || r.clienteKey || "Cliente";
+      var c = cuentas.find(function(x){ return norm(x.cliente) === norm(nombre); });
+      if(!c){ c = { id: uid(), cliente: nombre, saldo: 0, movimientos: [] }; cuentas.push(c); }
+      var m = +r.monto || 0;
+      if(r.tipo === "deuda"){ c.saldo = (+c.saldo||0) + m; c.movimientos.push({ ts: r.ts || Date.now(), tipo: "fiado", monto: m, ref: r.ventaId }); }
+      else { c.saldo = (+c.saldo||0) - m; c.movimientos.push({ ts: r.ts || Date.now(), tipo: "pago", monto: m }); }
+    });
+    cuentas.forEach(function(c){ c.saldo = Math.max(0, Math.round((+c.saldo||0)*100)/100); });
+  }
+  d.fiados = cuentas;
+}
 function adopt(d){
   var keep = Object.assign({}, d);
   ["productos","ventas","compras","pedidos","recetas","fiados","usuarios"].forEach(function(k){
     keep[k] = Array.isArray(d[k]) ? d[k] : [];
   });
   if(!keep.usuarios.length) keep.usuarios = [{ id: "u_dueno", nombre: "Administrador" }];
+  migrarFormato(keep);
   S = keep;
 }
 function save(){
@@ -639,6 +690,7 @@ function renderAll(){
   if(tab === "fiado") renderFiado();
   if(tab === "codigos"){ renderCodigos(); renderLabels(); }
   if(tab === "carteles") renderCartelesPage();
+  if(tab === "gestion") renderGestion();
   if(tab === "mas") renderMas();
 }
 
@@ -957,7 +1009,7 @@ function renderVentas(){
           '<div class="small muted">'+esc(itemsStr)+(v.cliente?' | Cliente: <b>'+esc(v.cliente)+'</b>':'')+'</div>' +
           (v.nota?'<div class="small muted" style="font-style:italic">Nota: '+esc(v.nota)+'</div>':'') +
         '</div>' +
-        '<div class="r"><div class="num" style="font-weight:800; font-size:16px">'+money(v.monto)+'</div><div class="small muted">'+esc(v.usuario)+'</div></div>' +
+        '<div class="r"><div class="num" style="font-weight:800; font-size:16px">'+money(v.monto)+'</div><div class="small muted">'+esc(v.usuario)+'</div><button class="btn" data-ticket="'+esc(v.id)+'" style="padding:3px 10px; margin-top:4px">Ticket</button></div>' +
       '</div>';
     }).join("") + '</div>';
   }
@@ -1029,6 +1081,7 @@ function abrirModalFiado(f){
       '<div class="kpi"><div class="k">Saldo actual</div><div class="v num" style="color:var(--warn)">'+money(f.saldo)+'</div></div>' +
     '</div>' +
     '<div class="stack" style="margin-top:10px">' +
+      (+f.saldo > 0 ? '<div class="card stack" style="padding:10px"><label class="f">Celular del cliente (con código de área, sin 0 ni 15)<input id="fTel" inputmode="numeric" placeholder="Ej: 3814123456" value="'+esc(f.tel||"")+'"></label><button class="btn" id="fWsp">Avisar por WhatsApp</button></div>' : '') +
       '<label class="f">Registrar Pago / Abono ($)<input id="fpMonto" type="number" step="any" placeholder="Ej: 2000"></label>' +
       '<div class="row">' +
         '<button class="btn pri grow" id="fpRegistrar">Registrar Pago</button>' +
@@ -1046,6 +1099,17 @@ function abrirModalFiado(f){
   '</div></div>';
 
   $("#fpCerrar").onclick = function(){ overlay.innerHTML = ""; };
+  var bWsp = $("#fWsp");
+  if(bWsp) bWsp.onclick = function(){
+    var d = ($("#fTel").value || "").replace(/\D/g, "").replace(/^0+/, "");
+    if(d.indexOf("54") === 0 && d.length >= 12) d = d.slice(2);
+    if(d.indexOf("9") === 0 && d.length === 11) d = d.slice(1);
+    if(d.length !== 10){ toast("Escribí el celular con código de área y sin 0 ni 15 (10 números)"); return; }
+    f.tel = d; save();
+    var nom = String(f.cliente || "").toLowerCase().replace(/(^|\s)\S/g, function(c){ return c.toUpperCase(); });
+    var msg = "Hola " + nom + "! Te escribo del almacén para recordarte que tenés un saldo pendiente de " + money(f.saldo) + ". Cuando puedas pasá a abonarlo. ¡Gracias!";
+    window.open("https://wa.me/549" + d + "?text=" + encodeURIComponent(msg), "_blank");
+  };
   overlay.querySelector(".sheetbg").onclick = function(e){ if(e.target === this) overlay.innerHTML = ""; };
 
   $("#fpRegistrar").onclick = function(){
@@ -1187,6 +1251,294 @@ function renderMas(){
   var ucInfo = ultimaCopia();
   $("#bkInfo").textContent = "Registros actuales: " + totalItems + " elementos guardados. " +
     (ucInfo ? "Última copia descargada: " + new Date(ucInfo).toLocaleDateString("es-AR") + "." : "Todavía no descargaste ninguna copia.");
+}
+
+/* ---------- Gestión: costos, precios en bloque, compras, planillas y tickets ---------- */
+function imprimirHtml(css, body){
+  var fr = document.createElement("iframe");
+  fr.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0";
+  document.body.appendChild(fr);
+  var d = fr.contentWindow.document;
+  d.open();
+  d.write('<!doctype html><meta charset="utf-8"><title>Imprimir</title><style>' + css + '</style><body>' + body);
+  d.close();
+  setTimeout(function(){ fr.contentWindow.focus(); fr.contentWindow.print(); setTimeout(function(){ fr.remove(); }, 60000); }, 300);
+}
+function copiarTexto(txt){
+  function viejo(){
+    var ta = document.createElement("textarea"); ta.value = txt; ta.style.cssText = "position:fixed;opacity:0";
+    document.body.appendChild(ta); ta.select();
+    try{ document.execCommand("copy"); toast("Copiado"); }catch(e){ toast("No se pudo copiar"); }
+    ta.remove();
+  }
+  if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(function(){ toast("Copiado"); }, viejo); }
+  else viejo();
+}
+function ventasPorProducto(desde){
+  var m = {};
+  S.ventas.forEach(function(v){
+    if(desde && (!v.fecha || v.fecha < desde)) return;
+    (v.items || []).forEach(function(i){
+      if(i.id == null) return;
+      var a = m[i.id] || (m[i.id] = { u: 0, rev: 0 });
+      a.u += (+i.cant || 0); a.rev += (+i.cant || 0) * (+i.precio || 0);
+    });
+  });
+  return m;
+}
+function listaProveedores(){
+  var o = {}; S.productos.forEach(function(p){ if(p.proveedor) o[p.proveedor] = 1; });
+  return Object.keys(o).sort();
+}
+function renderGestion(){ renderGCostos(); renderGPrecios(); renderGCompras(); renderGPlanillas(); renderGTicket(); }
+
+/* 1) Costos que faltan */
+function renderGCostos(){
+  var vp = ventasPorProducto();
+  var falt = S.productos.filter(function(p){ return !(+p.costo > 0); }).map(function(p){ return { p: p, rev: (vp[p.id] || {}).rev || 0 }; });
+  falt.sort(function(a,b){ return b.rev - a.rev; });
+  var h;
+  if(!falt.length){ h = '<h3>Costos</h3><div class="small muted">Todos tus productos tienen el costo cargado.</div>'; }
+  else {
+    h = '<h3>Costos que faltan cargar</h3><div class="small muted">' + falt.length + ' productos sin costo. Te muestro primero los que más facturaron: con el costo cargado vas a saber cuánto ganás en cada uno.</div><div class="list">' +
+      falt.slice(0, 25).map(function(x){
+        return '<div class="item" style="cursor:default"><div class="l"><b>' + esc(x.p.nombre) + '</b><div class="small muted">Vendido: ' + money(x.rev) + ' · Precio: ' + money(x.p.precio) + '</div></div>' +
+          '<div class="r"><input type="number" step="any" inputmode="decimal" placeholder="Costo" data-costo="' + esc(x.p.id) + '" style="width:110px"></div></div>';
+      }).join("") + '</div>';
+  }
+  $("#gCostos").innerHTML = h;
+}
+
+/* 2) Precios en bloque */
+function renderGPrecios(){
+  var opts = '<option value="">Todos los productos</option>' + listaProveedores().map(function(k){ return '<option value="' + esc(k) + '">Proveedor: ' + esc(k) + '</option>'; }).join("");
+  var h = '<h3>Actualizar precios en bloque</h3>' +
+    '<div class="formgrid">' +
+      '<label class="f">Aplicar a<select id="gpAlcance">' + opts + '</select></label>' +
+      '<label class="f">Nombre contiene (opcional)<input id="gpTexto" placeholder="Ej: coca"></label>' +
+      '<label class="f">Aumento %<input id="gpPct" type="number" step="any" inputmode="decimal" placeholder="Ej: 10 (negativo baja)"></label>' +
+      '<label class="f">Redondear a<select id="gpRedondeo"><option value="0">Sin redondear</option><option value="10">$10</option><option value="50">$50</option><option value="100">$100</option></select></label>' +
+    '</div>' +
+    '<label class="small row" style="gap:6px"><input type="checkbox" id="gpCosto" style="width:auto"> También ajustar el costo</label>' +
+    '<button class="btn pri" id="gpVer">Ver cambios antes de aplicar</button>';
+  if(S.ajustePrevio){
+    h += '<div class="small muted">Último ajuste: ' + new Date(S.ajustePrevio.ts).toLocaleDateString("es-AR") + ' (' + S.ajustePrevio.pct + '%) en ' + S.ajustePrevio.items.length + ' productos.</div>' +
+      '<button class="btn" id="gpDeshacer">Deshacer el último ajuste</button>';
+  }
+  $("#gPrecios").innerHTML = h;
+}
+function calcularAjuste(){
+  var prov = $("#gpAlcance").value, txt = norm($("#gpTexto").value), pct = parseFloat($("#gpPct").value);
+  var red = +$("#gpRedondeo").value, conCosto = $("#gpCosto").checked;
+  if(isNaN(pct) || pct === 0){ toast("Escribí el porcentaje de aumento"); return null; }
+  var out = [];
+  S.productos.forEach(function(p){
+    if(prov && p.proveedor !== prov) return;
+    if(txt && norm(p.nombre).indexOf(txt) === -1) return;
+    var pr = +p.precio || 0; if(pr <= 0) return;
+    var np = pr * (1 + pct / 100);
+    np = red > 0 ? Math.round(np / red) * red : Math.round(np * 100) / 100;
+    if(np < 0) np = 0;
+    var c = +p.costo || 0, nc = c;
+    if(conCosto && c > 0) nc = Math.round(c * (1 + pct / 100) * 100) / 100;
+    if(np !== pr || nc !== c) out.push({ p: p, antes: pr, despues: np, cAntes: c, cDesp: nc });
+  });
+  return { pct: pct, lista: out };
+}
+function verAjuste(){
+  var r = calcularAjuste(); if(!r) return;
+  if(!r.lista.length){ toast("Ningún producto cambia con estos datos"); return; }
+  var overlay = $("#overlay");
+  overlay.innerHTML = '<div class="sheetbg"><div class="sheet"><h3>Cambios de precio (' + r.pct + '%)</h3>' +
+    '<div class="small muted">Se van a modificar <b>' + r.lista.length + '</b> productos. Ejemplos:</div>' +
+    '<div class="card list" style="max-height:260px; overflow:auto; margin-top:8px">' +
+    r.lista.slice(0, 12).map(function(x){ return '<div class="item" style="cursor:default"><div class="l">' + esc(x.p.nombre) + '</div><div class="r num">' + money(x.antes) + ' → <b>' + money(x.despues) + '</b></div></div>'; }).join("") +
+    '</div><div class="row" style="margin-top:12px; justify-content:flex-end"><button class="btn" id="gpNo">Cancelar</button><button class="btn pri" id="gpSi">Aplicar</button></div></div></div>';
+  $("#gpNo").onclick = function(){ overlay.innerHTML = ""; };
+  overlay.querySelector(".sheetbg").onclick = function(e){ if(e.target === this) overlay.innerHTML = ""; };
+  $("#gpSi").onclick = function(){
+    S.ajustePrevio = { ts: Date.now(), pct: r.pct, items: r.lista.map(function(x){ return { id: x.p.id, precio: x.antes, costo: x.cAntes }; }) };
+    r.lista.forEach(function(x){ x.p.precio = x.despues; if(x.cDesp !== x.cAntes) x.p.costo = x.cDesp; });
+    save(); overlay.innerHTML = ""; renderGPrecios();
+    toast("Precios actualizados en " + r.lista.length + " productos");
+  };
+}
+function deshacerAjuste(){
+  var a = S.ajustePrevio; if(!a) return;
+  if(!confirm("¿Volver los precios a como estaban antes del último ajuste? (" + a.items.length + " productos)")) return;
+  a.items.forEach(function(it){
+    var p = S.productos.find(function(x){ return x.id === it.id; });
+    if(p){ p.precio = it.precio; p.costo = it.costo; }
+  });
+  delete S.ajustePrevio; save(); renderGPrecios(); toast("Precios restaurados");
+}
+
+/* 3) Lista de compras */
+function renderGCompras(){
+  var opts = '<option value="">Todos los proveedores</option>' + listaProveedores().map(function(k){ return '<option value="' + esc(k) + '">' + esc(k) + '</option>'; }).join("");
+  $("#gCompras").innerHTML = '<h3>Lista de compras</h3>' +
+    '<div class="small muted">Productos en o por debajo de su stock mínimo. "Pedir" es lo que falta para volver al mínimo.</div>' +
+    '<div class="row"><select id="gcProv" class="grow">' + opts + '</select></div>' +
+    '<label class="small row" style="gap:6px"><input type="checkbox" id="gcMes" style="width:auto" checked> Solo los que vendí en los últimos 30 días</label>' +
+    '<div id="gcLista"></div>' +
+    '<div class="row"><button class="btn" id="gcCopiar">Copiar lista</button><button class="btn" id="gcImprimir">Imprimir</button></div>';
+  drawCompras();
+}
+function listaCompras(){
+  var prov = $("#gcProv").value, soloMes = $("#gcMes").checked;
+  var vp = soloMes ? ventasPorProducto(getFechaOffset(30)) : null, g = {};
+  S.productos.forEach(function(p){
+    var min = +p.minimo || 0; if(min <= 0) return;
+    var st = +p.stock || 0; if(st > min) return;
+    if(prov && p.proveedor !== prov) return;
+    if(vp && !vp[p.id]) return;
+    var k = p.proveedor || "Sin proveedor";
+    (g[k] = g[k] || []).push({ p: p, st: st, min: min, pedir: Math.max(1, min - Math.max(st, 0)) });
+  });
+  return g;
+}
+function drawCompras(){
+  var g = listaCompras(), ks = Object.keys(g).sort(), n = 0;
+  ks.forEach(function(k){ n += g[k].length; });
+  $("#gcLista").innerHTML = !n ? '<div class="empty small">No hay productos para reponer con estos filtros.</div>' :
+    '<div class="small muted">' + n + ' productos</div>' + ks.map(function(k){
+      return '<h4 style="margin-top:10px">' + esc(k) + '</h4><div class="list">' + g[k].map(function(x){
+        return '<div class="item" style="cursor:default"><div class="l">' + esc(x.p.nombre) + '<div class="small muted">Stock ' + x.st + ' · mínimo ' + x.min + '</div></div><div class="r num"><b>Pedir ' + x.pedir + '</b></div></div>';
+      }).join("") + '</div>';
+    }).join("");
+}
+function textoCompras(){
+  var g = listaCompras();
+  return Object.keys(g).sort().map(function(k){
+    return "Pedido - " + k + ":\n" + g[k].map(function(x){ return "- " + x.p.nombre + " x " + x.pedir; }).join("\n");
+  }).join("\n\n");
+}
+
+/* 4) Planillas para Excel */
+function renderGPlanillas(){
+  var ms = {}; S.ventas.forEach(function(v){ if(v.fecha) ms[v.fecha.slice(0,7)] = true; });
+  var opts = '<option value="">Todo el período</option>' + Object.keys(ms).sort().reverse().map(function(m){ return '<option value="' + m + '">' + mesNombre(m) + '</option>'; }).join("");
+  $("#gPlanillas").innerHTML = '<h3>Planillas para Excel</h3>' +
+    '<div class="small muted">Se descargan como archivo .csv y se abren directo en Excel.</div>' +
+    '<label class="f">Período de ventas<select id="plMes">' + opts + '</select></label>' +
+    '<div class="row"><button class="btn" id="plVentas">Ventas</button><button class="btn" id="plDetalle">Ventas por producto</button></div>' +
+    '<div class="row"><button class="btn" id="plProductos">Productos</button><button class="btn" id="plFiado">Fiado</button></div>';
+}
+function csvCell(x){ x = x == null ? "" : String(x); return /[;"\n\r]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x; }
+function nCsv(n){ return String(Math.round((+n || 0) * 100) / 100).replace(".", ","); }
+function descargarCSV(nombre, filas){
+  var txt = "﻿" + filas.map(function(r){ return r.map(csvCell).join(";"); }).join("\r\n");
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([txt], { type: "text/csv;charset=utf-8" }));
+  a.download = nombre; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); }, 4000);
+  toast("Planilla descargada");
+}
+function ventasPeriodo(){
+  var m = $("#plMes").value;
+  return S.ventas.filter(function(v){ return !m || (v.fecha && v.fecha.slice(0,7) === m); }).slice().sort(function(a,b){ return (a.ts||0) - (b.ts||0); });
+}
+function planilla(tipo){
+  var sufijo = ($("#plMes").value || "todo"), f, filas = [];
+  if(tipo === "ventas"){
+    filas.push(["Fecha","Hora","Empleado","Medio de pago","Cliente (fiado)","Nota","Total","Detalle"]);
+    ventasPeriodo().forEach(function(v){
+      filas.push([v.fecha, hora(v.ts), v.usuario, v.medio, v.cliente, v.nota, nCsv(v.monto), (v.items||[]).map(function(i){ return i.cant + "x " + i.nombre; }).join(", ")]);
+    });
+    f = "ventas_" + sufijo + ".csv";
+  } else if(tipo === "detalle"){
+    var P = {}; S.productos.forEach(function(p){ P[p.id] = p; });
+    filas.push(["Fecha","Hora","Empleado","Medio de pago","Producto","Cantidad","Precio","Subtotal","Costo actual","Ganancia estimada"]);
+    ventasPeriodo().forEach(function(v){
+      (v.items||[]).forEach(function(i){
+        var p = P[i.id], c = p ? (+p.costo || 0) : 0, sub = (+i.cant||0) * (+i.precio||0);
+        filas.push([v.fecha, hora(v.ts), v.usuario, v.medio, i.nombre, nCsv(i.cant), nCsv(i.precio), nCsv(sub), c ? nCsv(c) : "", c ? nCsv(sub - c * (+i.cant||0)) : ""]);
+      });
+    });
+    f = "ventas_por_producto_" + sufijo + ".csv";
+  } else if(tipo === "productos"){
+    filas.push(["Producto","Código","Proveedor","Unidad","Stock","Mínimo","Costo","Precio","Margen %"]);
+    S.productos.slice().sort(function(a,b){ return String(a.nombre).localeCompare(String(b.nombre)); }).forEach(function(p){
+      var c = +p.costo || 0, pr = +p.precio || 0;
+      filas.push([p.nombre, p.codigo, p.proveedor, p.unidad, nCsv(p.stock), nCsv(p.minimo), c ? nCsv(c) : "", nCsv(pr), (c && pr) ? nCsv((pr - c) / pr * 100) : ""]);
+    });
+    f = "productos.csv";
+  } else {
+    filas.push(["Cliente","Saldo","Celular"]);
+    S.fiados.slice().sort(function(a,b){ return (+b.saldo||0) - (+a.saldo||0); }).forEach(function(c){ filas.push([c.cliente, nCsv(c.saldo), c.tel || ""]); });
+    f = "fiado.csv";
+  }
+  descargarCSV(f, filas);
+}
+
+/* 5) Datos del ticket + ticket de cada venta */
+function renderGTicket(){
+  $("#gTicket").innerHTML = '<h3>Datos para el ticket</h3>' +
+    '<div class="small muted">Aparecen en el ticket que se imprime o se manda por WhatsApp desde la pestaña Ventas.</div>' +
+    '<label class="f">Nombre del negocio<input id="gtNegocio" value="' + esc(S.negocio || "") + '" placeholder="Mi Almacén"></label>' +
+    '<label class="f">Mensaje al final<input id="gtPie" value="' + esc(S.ticketPie == null ? "¡Gracias por tu compra!" : S.ticketPie) + '"></label>';
+}
+function ticketTexto(v){
+  var W = 32, L = [];
+  function lr(a, b){ a = String(a); b = String(b); var sp = W - a.length - b.length; return sp > 0 ? a + new Array(sp + 1).join(" ") + b : a + " " + b; }
+  var d = new Date(v.ts || Date.now());
+  L.push((S.negocio || "Mi Almacén").toUpperCase());
+  L.push(d.toLocaleDateString("es-AR") + " " + hora(v.ts || Date.now()));
+  L.push(new Array(W + 1).join("-"));
+  (v.items || []).forEach(function(i){
+    L.push(lr(i.cant + " x " + String(i.nombre).slice(0, W - 12), money((+i.cant||0) * (+i.precio||0))));
+  });
+  L.push(new Array(W + 1).join("-"));
+  L.push(lr("TOTAL", money(v.monto)));
+  L.push("Pago: " + v.medio + (v.cliente ? " (" + v.cliente + ")" : ""));
+  if(v.nota) L.push("Nota: " + v.nota);
+  var pie = S.ticketPie == null ? "¡Gracias por tu compra!" : S.ticketPie;
+  if(pie){ L.push(""); L.push(pie); }
+  return L.join("\n");
+}
+function abrirTicket(v){
+  var overlay = $("#overlay"), txt = ticketTexto(v);
+  overlay.innerHTML = '<div class="sheetbg"><div class="sheet"><h3>Ticket</h3>' +
+    '<pre style="background:var(--surface2); padding:12px; border-radius:10px; overflow:auto; font-family:var(--f-mono); font-size:13px; white-space:pre-wrap">' + esc(txt) + '</pre>' +
+    '<div class="row" style="margin-top:10px; flex-wrap:wrap"><button class="btn pri" id="tkPrint">Imprimir</button><button class="btn" id="tkWsp">Mandar por WhatsApp</button><button class="btn" id="tkClose">Cerrar</button></div></div></div>';
+  $("#tkClose").onclick = function(){ overlay.innerHTML = ""; };
+  overlay.querySelector(".sheetbg").onclick = function(e){ if(e.target === this) overlay.innerHTML = ""; };
+  $("#tkPrint").onclick = function(){ imprimirHtml("@page{margin:4mm}body{width:72mm;font-family:monospace;font-size:12px;white-space:pre-wrap}", esc(txt)); };
+  $("#tkWsp").onclick = function(){ window.open("https://wa.me/?text=" + encodeURIComponent(txt), "_blank"); };
+}
+function initGestion(){
+  var sec = $("#v-gestion");
+  sec.addEventListener("change", function(e){
+    var t = e.target;
+    if(t.dataset && t.dataset.costo){
+      var v = parseFloat(t.value), p = S.productos.find(function(x){ return x.id === t.dataset.costo; });
+      if(p && v > 0){
+        p.costo = v; save();
+        var pr = +p.precio || 0;
+        toast("Costo guardado" + (pr > 0 ? " · margen " + Math.round((pr - v) / pr * 100) + "%" : ""));
+        renderGCostos();
+      }
+    }
+    if(t.id === "gcProv" || t.id === "gcMes") drawCompras();
+    if(t.id === "gtNegocio"){ S.negocio = t.value.trim(); save(); toast("Guardado"); }
+    if(t.id === "gtPie"){ S.ticketPie = t.value.trim(); save(); toast("Guardado"); }
+  });
+  sec.addEventListener("click", function(e){
+    var id = e.target.id;
+    if(id === "gpVer") verAjuste();
+    else if(id === "gpDeshacer") deshacerAjuste();
+    else if(id === "gcCopiar"){ var t = textoCompras(); if(t) copiarTexto(t); else toast("No hay nada para copiar"); }
+    else if(id === "gcImprimir"){ var t2 = textoCompras(); if(t2) imprimirHtml("body{font-family:Arial,sans-serif;font-size:14px;white-space:pre-wrap}", esc(t2)); else toast("No hay nada para imprimir"); }
+    else if(id === "plVentas") planilla("ventas");
+    else if(id === "plDetalle") planilla("detalle");
+    else if(id === "plProductos") planilla("productos");
+    else if(id === "plFiado") planilla("fiado");
+  });
+  $("#mDetail").addEventListener("click", function(e){
+    var b = e.target.closest("[data-ticket]"); if(!b) return;
+    var v = S.ventas.find(function(x){ return x.id === b.dataset.ticket; });
+    if(v) abrirTicket(v);
+  });
 }
 
 /* ---------- Event Listeners & Init ---------- */
@@ -1435,6 +1787,7 @@ document.addEventListener("DOMContentLoaded", function(){
     };
     reader.readAsText(file);
   };
+  try{ initGestion(); }catch(err){ console.error(err); }
 });
 })();
 </script>
