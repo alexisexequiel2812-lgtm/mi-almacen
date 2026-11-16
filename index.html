@@ -256,6 +256,11 @@
       </div>
 
       <div class="chips" id="mChips" style="margin-top:12px"></div>
+
+      <label class="f" style="margin-top:10px">Buscar un día
+        <input type="date" id="vDia">
+      </label>
+      <div id="mResumen" class="stack" style="margin-top:12px"></div>
      
       <div class="row" style="margin-top:10px; gap:8px">
         <input id="vSearch" class="grow" placeholder="Buscar por producto, cliente o nota..." aria-label="Buscar venta">
@@ -264,6 +269,9 @@
 
       <div id="mDetail" style="margin-top:12px"></div>
      
+      <h3 style="margin-top:24px" id="mDiasTitulo">Resumen por día</h3>
+      <div class="card tablewrap" id="mDias"></div>
+
       <h3 style="margin-top:24px">Resumen por mes</h3>
       <div class="card tablewrap" id="mTable"></div>
     </section>
@@ -281,6 +289,10 @@
         <div class="kpi"><div class="k">Clientes con deuda</div><div class="v num" id="fCount">0</div></div>
       </div>
       <div class="card list" id="fList"></div>
+
+      <h3 style="margin-top:20px">Detalle de lo fiado</h3>
+      <div class="small muted">Cada cliente con todos los productos que se le fiaron. Usa el buscador de arriba.</div>
+      <div id="fDetalle" class="stack" style="margin-top:8px"></div>
     </section>
 
     <!-- CODIGOS DE BARRAS -->
@@ -1025,6 +1037,8 @@ function renderVentas(){
   var list = S.ventas.filter(function(v){
     if(mesSel === "hoy"){
       if(v.fecha !== hoyStr()) return false;
+    } else if(String(mesSel).indexOf("dia:") === 0){
+      if(v.fecha !== mesSel.slice(4)) return false;
     } else {
       if(!v.fecha || v.fecha.slice(0,7) !== mesSel) return false;
     }
@@ -1072,6 +1086,104 @@ function renderVentas(){
   }
   tHtml += '</tbody></table>';
   $("#mTable").innerHTML = tHtml;
+  renderResumenDias();
+}
+
+/* ---------- Ventas: búsqueda por día y resumen del día / del mes ---------- */
+function fechaCorta(k){
+  var p = k.split("-");
+  return DIAS[new Date(+p[0], +p[1]-1, +p[2]).getDay()].slice(0,3) + " " + p[2] + "/" + p[1];
+}
+function resumenDe(lista){
+  var r = { n: 0, tot: 0, efe: 0, tra: 0, fia: 0 };
+  lista.forEach(function(v){
+    var m = +v.monto || 0; r.n++; r.tot += m;
+    if(v.medio === "efectivo") r.efe += m;
+    else if(v.medio === "transferencia") r.tra += m;
+    else if(v.medio === "fiado") r.fia += m;
+  });
+  return r;
+}
+function tarjetaResumen(titulo, r){
+  return '<div class="card"><h3 style="margin-bottom:6px">' + titulo + '</h3>' +
+    '<div class="kpis" style="margin:6px 0">' +
+      '<div class="kpi"><div class="k">Total vendido</div><div class="v num">' + money(r.tot) + '</div></div>' +
+      '<div class="kpi"><div class="k">💵 Efectivo</div><div class="v num">' + money(r.efe) + '</div></div>' +
+      '<div class="kpi"><div class="k">📱 Transferencia</div><div class="v num">' + money(r.tra) + '</div></div>' +
+      '<div class="kpi"><div class="k">📝 Fiado</div><div class="v num" style="color:var(--warn)">' + money(r.fia) + '</div></div>' +
+    '</div><div class="small muted">' + r.n + ' venta' + (r.n === 1 ? '' : 's') + '</div></div>';
+}
+function renderResumenDias(){
+  var dia = null;
+  if(mesSel === "hoy") dia = hoyStr();
+  else if(String(mesSel).indexOf("dia:") === 0) dia = mesSel.slice(4);
+  var mes = dia ? dia.slice(0,7) : mesSel;
+  var inp = $("#vDia"); if(inp) inp.value = dia || "";
+
+  var delMes = S.ventas.filter(function(v){ return v.fecha && v.fecha.slice(0,7) === mes; });
+  var html = "";
+  if(dia) html += tarjetaResumen("Día: " + fechaLarga(dia), resumenDe(S.ventas.filter(function(v){ return v.fecha === dia; })));
+  html += tarjetaResumen("Mes: " + mesNombre(mes), resumenDe(delMes));
+  $("#mResumen").innerHTML = html;
+
+  var porDia = {};
+  delMes.forEach(function(v){ (porDia[v.fecha] = porDia[v.fecha] || []).push(v); });
+  var ks = Object.keys(porDia).sort().reverse();
+  $("#mDiasTitulo").textContent = "Resumen por día — " + mesNombre(mes);
+  var t = '<table><thead><tr><th>Día</th><th>Ventas</th><th>Efectivo</th><th>Transf.</th><th>Fiado</th><th>Total</th></tr></thead><tbody>';
+  if(!ks.length) t += '<tr><td colspan="6" style="text-align:center; color:var(--muted)">Sin ventas en este mes</td></tr>';
+  ks.forEach(function(k){
+    var r = resumenDe(porDia[k]);
+    t += '<tr class="clk" data-dia="' + k + '"' + (k === dia ? ' style="background:var(--accent-soft)"' : '') + '><td>' + fechaCorta(k) + '</td><td class="num">' + r.n + '</td><td class="num">' + money(r.efe) + '</td><td class="num">' + money(r.tra) + '</td><td class="num">' + money(r.fia) + '</td><td class="num" style="font-weight:700">' + money(r.tot) + '</td></tr>';
+  });
+  if(ks.length){
+    var rm = resumenDe(delMes);
+    t += '<tr style="font-weight:800"><td>Total</td><td class="num">' + rm.n + '</td><td class="num">' + money(rm.efe) + '</td><td class="num">' + money(rm.tra) + '</td><td class="num">' + money(rm.fia) + '</td><td class="num">' + money(rm.tot) + '</td></tr>';
+  }
+  $("#mDias").innerHTML = t + '</tbody></table>';
+}
+function initVentasExtra(){
+  $("#vDia").onchange = function(){ mesSel = this.value ? "dia:" + this.value : "hoy"; renderVentas(); };
+  $("#mDias").onclick = function(e){
+    var tr = e.target.closest("tr[data-dia]"); if(!tr) return;
+    mesSel = "dia:" + tr.dataset.dia; renderVentas();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+}
+
+/* ---------- Fiado: productos fiados y a quién ---------- */
+function detalleMov(m){
+  if(m.tipo === "pago" || !m.ref) return "";
+  var v = S.ventas.find(function(x){ return x.id === m.ref; });
+  if(!v || !v.items || !v.items.length) return "";
+  return '<div class="small" style="margin-top:3px">' + esc(v.items.map(function(i){ return i.cant + "x " + i.nombre; }).join(", ")) + '</div>';
+}
+function renderFiadoDetalle(list){
+  var box = $("#fDetalle"); if(!box) return;
+  if(!list.length){ box.innerHTML = ""; return; }
+  var porId = {}; S.ventas.forEach(function(v){ porId[v.id] = v; });
+  var cuentas = list.slice().sort(function(a,b){ return ((+b.saldo||0) - (+a.saldo||0)) || String(a.cliente).localeCompare(String(b.cliente)); });
+  box.innerHTML = cuentas.map(function(f){
+    var fiado = 0, pagado = 0, movs = [];
+    (f.movimientos || []).forEach(function(m){
+      if(m.tipo === "pago") pagado += (+m.monto || 0);
+      else { fiado += (+m.monto || 0); movs.push(m); }
+    });
+    movs.sort(function(a,b){ return (b.ts||0) - (a.ts||0); });
+    var saldo = +f.saldo || 0;
+    var rows = movs.length ? movs.map(function(m){
+      var v = porId[m.ref];
+      var fecha = v && v.fecha ? v.fecha : (function(){ var x = new Date(m.ts); return x.getFullYear() + "-" + pad(x.getMonth()+1) + "-" + pad(x.getDate()); })();
+      var prods = (v && v.items && v.items.length)
+        ? v.items.map(function(i){ return esc(i.cant + " x " + i.nombre) + ' <span class="muted">(' + money((+i.cant||0) * (+i.precio||0)) + ')</span>'; }).join("<br>")
+        : '<span class="muted">(sin detalle de productos)</span>';
+      return '<div class="item" style="cursor:default; align-items:flex-start"><div class="l"><b>' + fechaCorta(fecha) + '</b><div class="small" style="margin-top:2px">' + prods + '</div></div><div class="r num" style="font-weight:700">' + money(m.monto) + '</div></div>';
+    }).join("") : '<div class="small muted" style="padding:8px">Todavía no se le fió nada.</div>';
+    return '<details class="card"' + (saldo > 0 ? ' open' : '') + '><summary><b>' + esc(f.cliente) + '</b> — ' +
+      (saldo > 0 ? 'debe <b style="color:var(--warn)">' + money(saldo) + '</b>' : '<span style="color:var(--good)">sin deuda</span>') +
+      ' <span class="small muted">· fiado en total ' + money(fiado) + ' · pagó ' + money(pagado) + ' · ' + movs.length + ' compra' + (movs.length === 1 ? '' : 's') + '</span></summary>' +
+      '<div class="list" style="margin-top:8px">' + rows + '</div></details>';
+  }).join("");
 }
 
 /* ---------- Fiados View ---------- */
@@ -1098,6 +1210,7 @@ function renderFiado(){
   var box = $("#fList");
   if(!list.length){
     box.innerHTML = '<div class="empty">No hay cuentas de fiado con saldo pendiente.</div>';
+    renderFiadoDetalle([]);
     return;
   }
 
@@ -1108,6 +1221,7 @@ function renderFiado(){
       '<div class="r"><div class="num" style="font-weight:800; font-size:18px; color:'+(saldo>0?'var(--warn)':'var(--good)')+'">'+money(saldo)+'</div></div>' +
     '</div>';
   }).join("");
+  renderFiadoDetalle(list);
 }
 
 function abrirModalFiado(f){
@@ -1126,7 +1240,7 @@ function abrirModalFiado(f){
       '<h4 style="margin-top:10px">Movimientos</h4>' +
       '<div class="card list" style="max-height:200px; overflow:auto">' +
         ((f.movimientos && f.movimientos.length) ? f.movimientos.slice().reverse().map(function(m){
-          return '<div class="item" style="cursor:default"><div class="l"><b>'+(m.tipo==='pago'?'Pago recibido':'Fiado').toUpperCase()+'</b><div class="small muted">'+fechaLarga(new Date(m.ts).toISOString().slice(0,10))+'</div></div><div class="r num" style="font-weight:700; color:'+(m.tipo==='pago'?'var(--good)':'var(--warn)')+'">'+money(m.monto)+'</div></div>';
+          return '<div class="item" style="cursor:default"><div class="l"><b>'+(m.tipo==='pago'?'Pago recibido':'Fiado').toUpperCase()+'</b><div class="small muted">'+fechaLarga(new Date(m.ts).toISOString().slice(0,10))+'</div>'+detalleMov(m)+'</div><div class="r num" style="font-weight:700; color:'+(m.tipo==='pago'?'var(--good)':'var(--warn)')+'">'+money(m.monto)+'</div></div>';
         }).join("") : '<div class="small muted" style="padding:10px">Sin movimientos</div>') +
       '</div>' +
       '<div class="row" style="margin-top:10px; justify-content:flex-end">' +
@@ -1993,6 +2107,7 @@ document.addEventListener("DOMContentLoaded", function(){
     reader.readAsText(file);
   };
   try{ initGestion(); }catch(err){ console.error(err); }
+  try{ initVentasExtra(); }catch(err){ console.error(err); }
 });
 })();
 </script>
